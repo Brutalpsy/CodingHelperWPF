@@ -1,22 +1,14 @@
-﻿using Microsoft.Win32;
-using System.Net;
-using System.Text;
+﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.SemanticKernel;
+using Microsoft.SemanticKernel.ChatCompletion;
+using Microsoft.Win32;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Data;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using System.Windows.Media.Media3D;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.SemanticKernel;
-using Microsoft.SemanticKernel.ChatCompletion;
-using System.Net;
 using Kernel = Microsoft.SemanticKernel.Kernel;
-using System;
 
 namespace CodingHelperWPF
 {
@@ -26,8 +18,8 @@ namespace CodingHelperWPF
     public partial class MainWindow : Window
     {
 
-        private  ChatHistory _chatHistory;
-        private  IChatCompletionService _chat;
+        private ChatHistory _chatHistory;
+        private IChatCompletionService _chat;
 
         public MainWindow()
         {
@@ -60,24 +52,64 @@ namespace CodingHelperWPF
         {
             if (!string.IsNullOrWhiteSpace(messageBox.Text))
             {
-                chatDisplay.AppendText(messageBox.Text + Environment.NewLine);
+                AppendMessageToChatDisplay(messageBox.Text, isUserMessage: true);
                 chatDisplay.ScrollToEnd();
                 _chatHistory.AddUserMessage(messageBox.Text);
 
+                var assistantResponse = string.Empty;
 
-                var assistentResponse = string.Empty;
-
+                // Build the assistant's response gradually
                 await foreach (var result in _chat.GetStreamingChatMessageContentsAsync(_chatHistory))
                 {
-                    assistentResponse += result.Content;
-                    chatDisplay.AppendText(result.Content);
+                    assistantResponse += result.Content;
                 }
-                MarkCodeBlocks();
-                _chatHistory.AddAssistantMessage(assistentResponse);
 
+                // Process and mark code blocks only in the new assistant response
+                MarkCodeBlocks(assistantResponse);
+
+                _chatHistory.AddAssistantMessage(assistantResponse);
                 messageBox.Clear();
             }
         }
+
+        private void AppendMessageToChatDisplay(string message, bool isUserMessage)
+        {
+            // Create a new paragraph for each message
+            var paragraph = new Paragraph();
+
+            // Create a border to encapsulate the message
+            Border border = new Border
+            {
+                Background = isUserMessage ? Brushes.DarkBlue : Brushes.Gray,
+                CornerRadius = new CornerRadius(15),
+                Margin = new Thickness(5, 15, 5, 15), // Space around the message bubble
+                Padding = new Thickness(10),
+                MaxWidth = 400 // Set a maximum width for the message bubble
+            };
+
+            // Create a TextBlock for the message text
+            TextBlock textBlock = new TextBlock
+            {
+                Text = message,
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = Brushes.White
+            };
+
+            // Assign the TextBlock to the Border
+            border.Child = textBlock;
+
+            // Add the Border inside an InlineUIContainer for proper placement
+            InlineUIContainer container = new InlineUIContainer(border);
+            paragraph.Inlines.Add(container);
+
+            // Add the paragraph to the chat display
+            chatDisplay.Document.Blocks.Add(paragraph);
+
+            // Add an empty paragraph after the message to create separation
+            chatDisplay.Document.Blocks.Add(new Paragraph()); // Acts as a spacer between messages
+        }
+
+
 
         private void messageBox_KeyDown(object sender, KeyEventArgs e)
         {
@@ -88,36 +120,44 @@ namespace CodingHelperWPF
             }
         }
 
-        private void MarkCodeBlocks()
+        private void MarkCodeBlocks(string newAssistantResponse)
         {
-            string richText = new TextRange(chatDisplay.Document.ContentStart, chatDisplay.Document.ContentEnd).Text;
-
-            if (richText.Contains("```"))
+            // Process only the new assistant response (don't reprocess the entire document)
+            if (newAssistantResponse.Contains("```"))
             {
-                chatDisplay.Document.Blocks.Clear();
-
-                string[] parts = richText.Split(new[] { "```" }, StringSplitOptions.None);
+                string[] parts = newAssistantResponse.Split(new[] { "```" }, StringSplitOptions.None);
 
                 for (int i = 0; i < parts.Length; i++)
                 {
                     if (i % 2 == 0) // Regular text
                     {
-                        chatDisplay.AppendText(parts[i]);
+                        AppendPlainText(parts[i]);
                     }
                     else // Code block
                     {
-                        // Remove any programming language label
                         string codeBlock = parts[i];
                         int firstLineEndIndex = codeBlock.IndexOf(Environment.NewLine);
                         if (firstLineEndIndex > 0 && codeBlock.Substring(0, firstLineEndIndex).Trim().All(char.IsLetter))
                         {
-                            // The first line is a language label; remove it
+                            // Remove the language label
                             codeBlock = codeBlock.Substring(firstLineEndIndex + Environment.NewLine.Length);
                         }
                         AppendCodeBlock(codeBlock);
                     }
                 }
             }
+            else
+            {
+                // No code block, append the whole response as plain text
+                AppendPlainText(newAssistantResponse);
+            }
+        }
+
+        private void AppendPlainText(string message)
+        {
+            Paragraph paragraph = new Paragraph();
+            paragraph.Inlines.Add(new Run(message));
+            chatDisplay.Document.Blocks.Add(paragraph);
         }
 
         private void AppendCodeBlock(string code)
